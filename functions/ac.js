@@ -1,123 +1,112 @@
+// Codeforces group standings -> { contestants: { handle: { ac: "A-B-D" } } }
+// Uses the OFFICIAL Codeforces API (contest.standings), signed with an API key.
+// Required env vars (Netlify -> Site configuration -> Environment variables):
+//   CF_KEY, CF_SECRET   (from https://codeforces.com/settings/api, account must be in the group)
+// Optional: PAGE_SIZE (default 200) - rows per "page", keeps the old /p/:page URLs working.
+
+const crypto = require("crypto");
 const express = require("express");
 const serverless = require("serverless-http");
-const { JSDOM } = require("jsdom");
 const axios = require("axios");
 
 const app = express();
 const router = express.Router();
 
-// to remove extra's
-function strip(string) {
-  return string.replace(/^\s+|\s+$/g, '');
+const PAGE_SIZE = parseInt(process.env.PAGE_SIZE, 10) || 200;
+
+// Signed request to the official API
+async function cfApi(method, params) {
+    const key = process.env.CF_KEY;
+    const secret = process.env.CF_SECRET;
+    if (!key || !secret) {
+        throw new Error("CF_KEY / CF_SECRET environment variables are not set");
+    }
+
+    const all = { ...params, apiKey: key, time: Math.floor(Date.now() / 1000) };
+    const query = Object.entries(all)
+        .sort(([ak, av], [bk, bv]) => (ak === bk ? String(av).localeCompare(String(bv)) : ak.localeCompare(bk)))
+        .map(([k, v]) => `${k}=${v}`)
+        .join("&");
+
+    const rand = crypto.randomBytes(3).toString("hex"); // 6 chars
+    const hash = crypto
+        .createHash("sha512")
+        .update(`${rand}/${method}?${query}#${secret}`)
+        .digest("hex");
+
+    const res = await axios.get(
+        `https://codeforces.com/api/${method}?${query}&apiSig=${rand}${hash}`,
+        { timeout: 15000, validateStatus: () => true }
+    );
+    if (res.data && res.data.status === "OK") return res.data.result;
+    const comment = res.data && res.data.comment ? res.data.comment : `HTTP ${res.status}`;
+    throw new Error(comment);
 }
 
-// to get the dom
-async function getDom(url) {
-    return axios.get(url)
-    .then((res) => {
-        const dom = new JSDOM(res.data);
-        return dom.window.document;
-    })
-}
-
-// get ac solutions for each contestant
-const getAc = async(url) => {
-    try{
-        const dom = await getDom(url);
-        let standing = dom.querySelector('.standings');
-        let problemsA = standing.rows[0].querySelectorAll('a');
-
-        let problems = [];
-        for (let problem of problemsA){
-            problems.push({
-                'name': problem.title, 
-                'link': 'https://codeforces.com' + problem.href
-            });
-        }
-        
-        let sheetNameA = dom.querySelector(".contest-name").querySelector('a');
-        let contest = {
-            'name': strip(sheetNameA.textContent),
-            'link': 'https://codeforces.com' + sheetNameA.href,
-            'problems': problems
+const getAc = async (groupId, contestId, page, handles) => {
+    try {
+        const pageNum = Math.max(1, parseInt(page, 10) || 1);
+        const params = {
+            contestId,
+            from: (pageNum - 1) * PAGE_SIZE + 1,
+            count: PAGE_SIZE,
+            showUnofficial: "true",
         };
+        if (handles) params.handles = handles; // semicolon separated
 
-        let data = {};
-        for(let i = 1; i < standing.rows.length - 1; i++){
-            let team = 'Not a team', contestants = [], trA = [], tmp;
-            let tr = standing.rows[i].querySelectorAll('td'), isTeam = true;
-            try{
-                trA = tr[1].querySelector('span').querySelectorAll('a');
-                if(!trA.length) isTeam = false;
-            }
-            catch{
-                isTeam = false;
-            }
-            if (isTeam && trA[0].href.includes('team')){ // it's a team
-                team = trA[0]['title'];
-                for (let k = 1; k < trA.length; k++){
-                    tmp = (trA[k].title.split(' '));
-                    contestants.push(tmp[tmp.length - 1]);
-                }
-            }
-            else{ // it's a contestant 
-                tmp = (tr[1].querySelector('a').title.split(' '));
-                contestants.push(tmp[tmp.length - 1]);
-            }
+        const result = await cfApi("contest.standings", params);
+        const link = `https://codeforces.com/group/${groupId}/contest/${contestId}`;
 
-            let tds = standing.rows[i].querySelectorAll('td');
-            for(let i = 4; i < tds.length; i++){
-                let txt = strip(tds[i].querySelector('span').textContent) || '-';
-                if(txt[0] == '-') continue;
-                for(let j = 0; j < contestants.length; j++){
-                    if(!(contestants[j] in data)){ // new contestant to the data
-                        data[contestants[j]] = [];
-                    }
-                    let pNum = problems[i - 4].name.split(' - ')[0];
-                    if(!data[contestants[j]].includes(pNum))
-                        data[contestants[j]].push(pNum);
-                }
+        const problems = result.problems.map((p) => ({
+            name: `${p.index} - ${p.name}`,
+            link: `${link}/problem/${p.index}`,
+        }));
+
+        const contestants = {};
+        for (const row of result.rows) {
+            // team rows have several members; everyone gets the same solves
+            const solved = [];
+            row.problemResults.forEach((pr, i) => {
+                if (pr.points > 0) solved.push(result.problems[i].index);
+            });
+            for (const m of row.party.members) {
+                contestants[m.handle] = { ac: solved.join("-") };
             }
         }
 
-        let keys = Object.keys(data);
-        keys.forEach(async (key) => {
-            data[key] = {
-                ac: data[key].join('-')
-            }
-        });
-
         return {
-            'status': 'OK',
-            'result': {
-                'contest': contest,
-                'contestants': data
+            status: "OK",
+            result: {
+                contest: { name: result.contest.name, link, problems },
+                contestants,
+                page: pageNum,
+                hasMore: result.rows.length === PAGE_SIZE,
             },
-        }
-    }
-    catch (err){
+        };
+    } catch (err) {
         return {
-            'status': 'FAILED',
-            'result': 'There is something wrong :(',
-            'err' : err.message
-        }
+            status: "FAILED",
+            result: "There is something wrong :(",
+            err: err.message,
+        };
     }
-}
+};
 
-router.get('/g/:groupId/c/:contestId/p/:page', async (req, res) => {
+// /g/:groupId/c/:contestId/p/:page            (optional ?handles=a;b;c)
+// /g/:groupId/c/:contestId/p/:page/l/:listId  (listId is accepted for old URLs but ignored:
+//                                              the official API has no list filter, use ?handles=)
+router.get("/g/:groupId/c/:contestId/p/:page", async (req, res) => {
     const { groupId, contestId, page } = req.params;
-    const url = `https://codeforces.com/group/${groupId}/contest/${contestId}/standings/page/${page}?showUnofficial=true`;
-    res.status(200).send(await getAc(url));
+    res.status(200).send(await getAc(groupId, contestId, page, req.query.handles));
 });
 
-router.get('/g/:groupId/c/:contestId/p/:page/l/:listId', async (req, res) => {
-    const { groupId, contestId, listId, page } = req.params;
-    const url = `https://codeforces.com/group/${groupId}/contest/${contestId}/standings/page/${page}?list=${listId}&showUnofficial=true`;
-    res.status(200).send(await getAc(url));
+router.get("/g/:groupId/c/:contestId/p/:page/l/:listId", async (req, res) => {
+    const { groupId, contestId, page } = req.params;
+    res.status(200).send(await getAc(groupId, contestId, page, req.query.handles));
 });
 
 // Netlify may pass either the rewritten or the original path
-app.use('/.netlify/functions/ac', router);
-app.use('/ac', router);
+app.use("/.netlify/functions/ac", router);
+app.use("/ac", router);
 
 module.exports.handler = serverless(app);
