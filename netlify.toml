@@ -1,0 +1,18 @@
+[build]
+  publish = "public"
+  functions = "functions"
+
+[functions]
+  node_bundler = "esbuild"
+  external_node_modules = ["jsdom"]
+
+# keep the original public URLs: /ac/g/<group>/c/<contest>/p/<page>[/l/<list>]
+[[redirects]]
+  from = "/ac/*"
+  to = "/.netlify/functions/ac/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/error.html"
+  status = 404
