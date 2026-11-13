@@ -51,6 +51,8 @@ const getAc = async (groupId, contestId, page, handles, asManager) => {
         const pageNum = Math.max(1, parseInt(page, 10) || 1);
         const params = {
             contestId,
+            groupCode: groupId, // group contests are only found when the group is given
+
             from: (pageNum - 1) * PAGE_SIZE + 1,
             count: PAGE_SIZE,
             showUnofficial: "true",
