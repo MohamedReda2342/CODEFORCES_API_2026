@@ -46,13 +46,71 @@ async function cfApi(method, params) {
     throw new Error(comment);
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Fallback used when contest.standings can't see a group contest.
+// Returns the same shape as getAc; all contestants come back on page 1.
+async function getAcFromStatus(groupId, contestId, pageNum, handles, asManager, link, standingsErr) {
+    const statusParams = { contestId, groupCode: groupId };
+    if (asManager) statusParams.asManager = "true";
+    let subs;
+    try {
+        subs = await cfApi("contest.status", statusParams);
+    } catch (statusErr) {
+        throw new Error(`standings: ${standingsErr.message} | status: ${statusErr.message}`);
+    }
+
+    const wanted = handles ? new Set(handles.split(";").map((h) => h.trim().toLowerCase())) : null;
+    const problemsByIndex = {};
+    const solvedBy = {};
+    for (const s of subs) {
+        problemsByIndex[s.problem.index] = s.problem.name;
+        for (const m of s.author.members) {
+            if (wanted && !wanted.has(m.handle.toLowerCase())) continue;
+            if (!solvedBy[m.handle]) solvedBy[m.handle] = new Set();
+            if (s.verdict === "OK") solvedBy[m.handle].add(s.problem.index);
+        }
+    }
+
+    const indexes = Object.keys(problemsByIndex).sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+    const contestants = {};
+    if (pageNum === 1) {
+        for (const [handle, set] of Object.entries(solvedBy)) {
+            contestants[handle] = { ac: indexes.filter((i) => set.has(i)).join("-") };
+        }
+    }
+
+    // contest name (best effort; wait to respect the API's 1 call / 2s limit)
+    let name = `Contest ${contestId}`;
+    try {
+        await sleep(2100);
+        const list = await cfApi("contest.list", { groupCode: groupId });
+        const c = list.find((x) => String(x.id) === String(contestId));
+        if (c) name = c.name;
+    } catch (_) { /* keep default name */ }
+
+    return {
+        status: "OK",
+        result: {
+            contest: {
+                name,
+                link,
+                problems: indexes.map((i) => ({ name: `${i} - ${problemsByIndex[i]}`, link: `${link}/problem/${i}` })),
+            },
+            contestants,
+            page: pageNum,
+            hasMore: false,
+            source: "contest.status", // problems nobody submitted are not listed
+        },
+    };
+}
+
 const getAc = async (groupId, contestId, page, handles, asManager) => {
     try {
         const pageNum = Math.max(1, parseInt(page, 10) || 1);
         const params = {
             contestId,
             groupCode: groupId, // group contests are only found when the group is given
-
             from: (pageNum - 1) * PAGE_SIZE + 1,
             count: PAGE_SIZE,
             showUnofficial: "true",
@@ -62,8 +120,15 @@ const getAc = async (groupId, contestId, page, handles, asManager) => {
         // (env CF_AS_MANAGER=true for always, or ?asManager=true per request)
         if (asManager || envOn("CF_AS_MANAGER")) params.asManager = "true";
 
-        const result = await cfApi("contest.standings", params);
         const link = `https://codeforces.com/group/${groupId}/contest/${contestId}`;
+        let result;
+        try {
+            result = await cfApi("contest.standings", params);
+        } catch (standingsErr) {
+            if (!/not found/i.test(standingsErr.message)) throw standingsErr;
+            // Fallback: build "who solved what" from the contest's submissions
+            return await getAcFromStatus(groupId, contestId, pageNum, handles, params.asManager, link, standingsErr);
+        }
 
         const problems = result.problems.map((p) => ({
             name: `${p.index} - ${p.name}`,
