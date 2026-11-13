@@ -108,6 +108,24 @@ router.get("/g/:groupId/c/:contestId/p/:page/l/:listId", async (req, res) => {
     res.status(200).send(await getAc(groupId, contestId, page, req.query.handles, req.query.asManager === "true"));
 });
 
+// Diagnostic: which contests of a group can the API key's account see?
+// Disabled unless the env var CF_DEBUG=true (it would expose group contest names publicly).
+router.get("/debug/:groupId", async (req, res) => {
+    if (process.env.CF_DEBUG !== "true") {
+        return res.status(404).send({ status: "FAILED", err: "debug disabled (set CF_DEBUG=true)" });
+    }
+    try {
+        const list = await cfApi("contest.list", { groupCode: req.params.groupId });
+        res.status(200).send({
+            status: "OK",
+            count: list.length,
+            contests: list.map((c) => ({ id: c.id, name: c.name, phase: c.phase, type: c.type })),
+        });
+    } catch (err) {
+        res.status(200).send({ status: "FAILED", err: err.message });
+    }
+});
+
 // Netlify may pass either the rewritten or the original path
 app.use("/.netlify/functions/ac", router);
 app.use("/ac", router);
