@@ -14,6 +14,9 @@ const router = express.Router();
 
 const PAGE_SIZE = parseInt(process.env.PAGE_SIZE, 10) || 200;
 
+// env flag helper: tolerates quotes/spaces/case, e.g. "true", ' True '
+const envOn = (name) => String(process.env[name] || "").replace(/["'\s]/g, "").toLowerCase() === "true";
+
 // Signed request to the official API
 async function cfApi(method, params) {
     const key = process.env.CF_KEY;
@@ -55,7 +58,7 @@ const getAc = async (groupId, contestId, page, handles, asManager) => {
         if (handles) params.handles = handles; // semicolon separated
         // managers of the group can read its contests with asManager=true
         // (env CF_AS_MANAGER=true for always, or ?asManager=true per request)
-        if (asManager || process.env.CF_AS_MANAGER === "true") params.asManager = "true";
+        if (asManager || envOn("CF_AS_MANAGER")) params.asManager = "true";
 
         const result = await cfApi("contest.standings", params);
         const link = `https://codeforces.com/group/${groupId}/contest/${contestId}`;
@@ -111,7 +114,7 @@ router.get("/g/:groupId/c/:contestId/p/:page/l/:listId", async (req, res) => {
 // Diagnostic: which contests of a group can the API key's account see?
 // Disabled unless the env var CF_DEBUG=true (it would expose group contest names publicly).
 router.get("/debug/:groupId", async (req, res) => {
-    if (process.env.CF_DEBUG !== "true") {
+    if (!envOn("CF_DEBUG")) {
         return res.status(404).send({ status: "FAILED", err: "debug disabled (set CF_DEBUG=true)" });
     }
     try {
