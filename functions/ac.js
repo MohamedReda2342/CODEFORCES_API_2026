@@ -43,7 +43,7 @@ async function cfApi(method, params) {
     throw new Error(comment);
 }
 
-const getAc = async (groupId, contestId, page, handles) => {
+const getAc = async (groupId, contestId, page, handles, asManager) => {
     try {
         const pageNum = Math.max(1, parseInt(page, 10) || 1);
         const params = {
@@ -53,6 +53,9 @@ const getAc = async (groupId, contestId, page, handles) => {
             showUnofficial: "true",
         };
         if (handles) params.handles = handles; // semicolon separated
+        // managers of the group can read its contests with asManager=true
+        // (env CF_AS_MANAGER=true for always, or ?asManager=true per request)
+        if (asManager || process.env.CF_AS_MANAGER === "true") params.asManager = "true";
 
         const result = await cfApi("contest.standings", params);
         const link = `https://codeforces.com/group/${groupId}/contest/${contestId}`;
@@ -97,12 +100,12 @@ const getAc = async (groupId, contestId, page, handles) => {
 //                                              the official API has no list filter, use ?handles=)
 router.get("/g/:groupId/c/:contestId/p/:page", async (req, res) => {
     const { groupId, contestId, page } = req.params;
-    res.status(200).send(await getAc(groupId, contestId, page, req.query.handles));
+    res.status(200).send(await getAc(groupId, contestId, page, req.query.handles, req.query.asManager === "true"));
 });
 
 router.get("/g/:groupId/c/:contestId/p/:page/l/:listId", async (req, res) => {
     const { groupId, contestId, page } = req.params;
-    res.status(200).send(await getAc(groupId, contestId, page, req.query.handles));
+    res.status(200).send(await getAc(groupId, contestId, page, req.query.handles, req.query.asManager === "true"));
 });
 
 // Netlify may pass either the rewritten or the original path
