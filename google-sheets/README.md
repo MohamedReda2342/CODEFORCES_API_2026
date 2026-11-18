@@ -44,13 +44,14 @@ the handle picker. Pick how to share:
 
 ## Notes
 
-- **Overall ranking:** 1) contests played (more is better), 2) problems solved (more is better), 3) total ICPC penalty (lower is better).
+- **Overall ranking:** 1) contests played (more is better), 2) problems solved (more is better), 3) late solves (fewer is better), 4) total ICPC penalty (lower is better).
   Contests played comes first so that someone who played every contest always ranks above someone who skipped one, even if the skipper has a smaller penalty or more solves.
   Only people with the same three numbers share a rank.
 - **Inside one contest:** most problems solved first, then the lowest penalty.
 - A person who registered but never submitted anything does not count as having played.
 - Problems solved **after the contest ended** (practice or virtual runs, or accepted after the end time) count as solved with **0 penalty**.
-  Because 0 is the lowest penalty, a person who solved everything late ranks above on-time solvers with the same number of solves.
+  They are counted in the **Late** column. With the same number of solves, fewer late solves rank higher, and penalty is only compared after that,
+  so a late solver's 0 never beats an on-time solver's real penalty.
 - Penalty is in minutes: the time of each accepted run plus 20 for every rejected run before it (compilation errors are free).
   It is Codeforces' own value for ICPC-style contests. For other contest types Codeforces reports 0, so ties stay ties.
   This needs the updated API (`functions/ac.js`) deployed on Netlify.

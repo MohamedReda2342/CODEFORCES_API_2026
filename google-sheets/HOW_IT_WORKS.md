@@ -45,10 +45,11 @@ Two options in **Settings**:
 **Overall (Leaderboard)**, in this order:
 1. **Contests played.** More is better. Someone who played every contest is always above someone who skipped one.
 2. **Problems solved.** More is better.
-3. **Penalty.** Lower is better. This is the Codeforces ICPC penalty in minutes, added up over the contests played.
-4. If all three are equal, they share the same rank.
+3. **Late solves.** Fewer is better. A late solve is a problem solved after the contest ended.
+4. **Penalty.** Lower is better. This is the Codeforces ICPC penalty in minutes, added up over the contests played.
+5. If all four are equal, they share the same rank.
 
-**Inside one contest (C-... tabs)**: most problems first, then the lowest penalty.
+**Inside one contest (C-... tabs)**: most problems first, then fewer late solves, then the lowest penalty.
 
 **What is penalty?** For each solved problem: the minute of the accepted run, plus 20 minutes for every wrong run before it. Compilation errors do not count. Solving faster with fewer mistakes gives a smaller penalty.
 
@@ -56,7 +57,7 @@ Two options in **Settings**:
 
 Someone who registered but never submitted anything did not play that contest.
 
-**Problems solved after the contest ended** count as solved, with 0 penalty. Since 0 is the lowest penalty, a person who solved everything late ranks above on-time solvers with the same number of solves.
+**Problems solved after the contest ended** count as solved, with 0 penalty, and are shown in the **Late** column. Late solves are compared before penalty, so someone who solved everything late never ranks above someone who solved the same number on time.
 
 ## How to use it
 

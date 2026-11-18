@@ -94,7 +94,10 @@ async function getAcFromStatus(groupId, contestId, pageNum, handles, asManager, 
     const contestants = {};
     if (pageNum === 1) {
         for (const [handle, set] of Object.entries(solvedBy)) {
-            contestants[handle] = { ac: indexes.filter((i) => set.has(i)).join("-"), penalty: penaltyOf(handle), tried: true };
+            const solvedIndexes = indexes.filter((i) => set.has(i));
+            // solved, but no in-contest accepted run -> solved after the contest ended
+            const lateCount = solvedIndexes.filter((i) => !(tries[handle] && tries[handle][i] && tries[handle][i].solvedAt !== null)).length;
+            contestants[handle] = { ac: solvedIndexes.join("-"), penalty: penaltyOf(handle), late: lateCount, tried: true };
         }
     }
 
@@ -157,7 +160,7 @@ const getAc = async (groupId, contestId, page, handles, asManager) => {
         // contest ended Codeforces reports a huge placeholder time (about 35 million minutes each).
         // Those problems still count as solved, with 0 penalty.
         const limit = Number.isFinite(result.contest.durationSeconds) ? result.contest.durationSeconds : Infinity;
-        const byHandle = {}; // handle -> { problems: { index -> penalty in minutes }, tried }
+        const byHandle = {}; // handle -> { problems: { index -> { penalty in minutes, late } }, tried }
         for (const row of result.rows) {
             // practice and virtual runs happen after the contest, so they never carry a penalty
             const late = row.party.participantType === "PRACTICE" || row.party.participantType === "VIRTUAL";
@@ -167,7 +170,9 @@ const getAc = async (groupId, contestId, page, handles, asManager) => {
                 if (pr.points > 0) {
                     const t = pr.bestSubmissionTimeSeconds;
                     const onTime = !late && Number.isFinite(t) && t <= limit;
-                    mine[result.problems[i].index] = onTime ? Math.floor(t / 60) + 20 * (pr.rejectedAttemptCount || 0) : 0;
+                    mine[result.problems[i].index] = onTime
+                        ? { penalty: Math.floor(t / 60) + 20 * (pr.rejectedAttemptCount || 0), late: false }
+                        : { penalty: 0, late: true };
                 }
                 if (pr.points > 0 || pr.rejectedAttemptCount > 0) tried = true;
             });
@@ -175,9 +180,9 @@ const getAc = async (groupId, contestId, page, handles, asManager) => {
             for (const m of row.party.members) {
                 const h = (byHandle[m.handle] = byHandle[m.handle] || { problems: {}, tried: false });
                 h.tried = h.tried || tried;
-                for (const [index, penalty] of Object.entries(mine)) {
-                    // one handle can have an in-contest row and a later practice row: keep the in-contest penalty
-                    if (!(index in h.problems) || (h.problems[index] === 0 && penalty > 0)) h.problems[index] = penalty;
+                for (const [index, solve] of Object.entries(mine)) {
+                    // one handle can have an in-contest row and a later practice row: keep the in-contest solve
+                    if (!(index in h.problems) || (h.problems[index].late && !solve.late)) h.problems[index] = solve;
                 }
             }
         }
@@ -185,8 +190,9 @@ const getAc = async (groupId, contestId, page, handles, asManager) => {
         const contestants = {};
         for (const [handle, h] of Object.entries(byHandle)) {
             const solvedIndexes = result.problems.map((p) => p.index).filter((i) => i in h.problems);
-            const penalty = solvedIndexes.reduce((sum, i) => sum + h.problems[i], 0);
-            contestants[handle] = { ac: solvedIndexes.join("-"), penalty, tried: h.tried };
+            const penalty = solvedIndexes.reduce((sum, i) => sum + h.problems[i].penalty, 0);
+            const lateCount = solvedIndexes.filter((i) => h.problems[i].late).length; // solved after the contest ended
+            contestants[handle] = { ac: solvedIndexes.join("-"), penalty, late: lateCount, tried: h.tried };
         }
 
         return {

@@ -209,28 +209,30 @@ function writeContestTab_(ss, contestId, link, data, cfg, roster) {
         const known = roster.get(key);
         const solved = new Set(String(data.contestants[h].ac || "").split("-").filter(Boolean));
         const penalty = Number(data.contestants[h].penalty) || 0;
+        const late = Number(data.contestants[h].late) || 0; // problems solved after the contest ended
         const tried = data.contestants[h].tried !== false; // older API versions don't send it
-        return { key, handle: known ? known.handle : h, name: known ? known.name : "", solved, penalty, tried };
+        return { key, handle: known ? known.handle : h, name: known ? known.name : "", solved, penalty, late, tried };
     });
     rows = rows.filter((r) => r.tried); // registered but never submitted = did not take part
     if (cfg.onlyListed && roster.size) rows = rows.filter((r) => roster.has(r.key));
-    // ICPC order: most solved first, then the lowest penalty
-    rows.sort((a, b) => b.solved.size - a.solved.size || a.penalty - b.penalty || a.handle.localeCompare(b.handle));
-    const ranks = competitionRanks_(rows.map((r) => `${r.solved.size}|${r.penalty}`));
+    // most solved first, then fewer late solves (on-time beats after-the-end), then the lowest penalty
+    rows.sort((a, b) => b.solved.size - a.solved.size || a.late - b.late || a.penalty - b.penalty || a.handle.localeCompare(b.handle));
+    const ranks = competitionRanks_(rows.map((r) => `${r.solved.size}|${r.late}|${r.penalty}`));
 
-    const width = 5 + problems.length;
+    const width = 6 + problems.length;
     sh.getRange(1, 1).setValue(`=HYPERLINK("${link}/standings","${q_(data.contest.name)}")`).setFontSize(14).setFontWeight("bold");
-    const header = ["Rank", "Handle", "Name", "Solved", "Penalty"].concat(problems.map((p) => `=HYPERLINK("${p.link}","${q_(p.index)}")`));
+    const header = ["Rank", "Handle", "Name", "Solved", "Penalty", "Late"].concat(problems.map((p) => `=HYPERLINK("${p.link}","${q_(p.index)}")`));
     styleHeader_(sh.getRange(2, 1, 1, width).setValues([header]));
-    sh.getRange(2, 5).setNote("ICPC penalty in minutes (time of each accepted run + 20 per rejected run before it). Lower is better.");
-    problems.forEach((p, i) => sh.getRange(2, 6 + i).setNote(p.title));
+    sh.getRange(2, 5).setNote("ICPC penalty in minutes (time of each accepted run + 20 per rejected run before it). Lower is better. Problems solved after the contest ended add 0.");
+    sh.getRange(2, 6).setNote("How many of the solved problems were solved after the contest ended. With the same Solved, fewer late solves rank higher.");
+    problems.forEach((p, i) => sh.getRange(2, 7 + i).setNote(p.title));
 
     if (rows.length) {
-        const values = rows.map((r, i) => [ranks[i], profile_(r.handle), r.name, r.solved.size, r.penalty]
+        const values = rows.map((r, i) => [ranks[i], profile_(r.handle), r.name, r.solved.size, r.penalty, r.late]
             .concat(problems.map((p) => (r.solved.has(p.index) ? "✔" : ""))));
         sh.getRange(3, 1, values.length, width).setValues(values);
         if (problems.length) {
-            const grid = sh.getRange(3, 6, values.length, problems.length);
+            const grid = sh.getRange(3, 7, values.length, problems.length);
             grid.setHorizontalAlignment("center");
             sh.setConditionalFormatRules([
                 SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo("✔").setBackground(COLORS.solved).setRanges([grid]).build(),
@@ -238,24 +240,28 @@ function writeContestTab_(ss, contestId, link, data, cfg, roster) {
         }
         sh.getRange(3, 1, values.length, 1).setHorizontalAlignment("center");
         sh.getRange(3, 4, values.length, 1).setHorizontalAlignment("center").setFontWeight("bold");
-        sh.getRange(3, 5, values.length, 1).setHorizontalAlignment("center");
+        sh.getRange(3, 5, values.length, 2).setHorizontalAlignment("center");
     }
     protect_(sh);
     sh.setFrozenRows(2);
     sh.setFrozenColumns(2);
-    sh.setColumnWidth(1, 50).setColumnWidth(2, 160).setColumnWidth(3, 180).setColumnWidth(4, 60).setColumnWidth(5, 70);
-    if (problems.length) sh.setColumnWidths(6, problems.length, 40);
+    sh.setColumnWidth(1, 50).setColumnWidth(2, 160).setColumnWidth(3, 180).setColumnWidth(4, 60).setColumnWidth(5, 70).setColumnWidth(6, 50);
+    if (problems.length) sh.setColumnWidths(7, problems.length, 40);
 
     return { tab, problems: problems.length, participants: rows.length };
 }
 
-// Reads a contest tab back: Map(lowercase handle -> { handle, rank, solved, penalty })
+// Reads a contest tab back: Map(lowercase handle -> { handle, rank, solved, penalty, late })
 function readContestTab_(sh) {
     const out = new Map();
     const n = sh.getLastRow() - 2;
     if (n < 1) return out;
-    sh.getRange(3, 1, n, 5).getValues().forEach(([rank, handle, , solved, penalty]) => {
-        if (handle) out.set(String(handle).toLowerCase(), { handle: String(handle), rank, solved: Number(solved) || 0, penalty: Number(penalty) || 0 });
+    sh.getRange(3, 1, n, 6).getValues().forEach(([rank, handle, , solved, penalty, late]) => {
+        if (handle) {
+            out.set(String(handle).toLowerCase(), {
+                handle: String(handle), rank, solved: Number(solved) || 0, penalty: Number(penalty) || 0, late: Number(late) || 0,
+            });
+        }
     });
     return out;
 }
@@ -284,6 +290,7 @@ function buildLeaderboard() {
             return {
                 attended: got.length,
                 total: got.reduce((s, h) => s + h.solved, 0),
+                late: got.reduce((s, h) => s + h.late, 0),
                 penalty: got.reduce((s, h) => s + h.penalty, 0),
             };
         };
@@ -303,7 +310,7 @@ function buildLeaderboard() {
     sh.clearConditionalFormatRules();
     sh.getCharts().forEach((c) => sh.removeChart(c));
 
-    const FIXED = ["Rank", "Δ", "Handle", "Name", "Total solved", "Contests", "Penalty", "Trend"];
+    const FIXED = ["Rank", "Δ", "Handle", "Name", "Total solved", "Contests", "Late", "Penalty", "Trend"];
     const width = FIXED.length + n;
     const updated = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), "yyyy-MM-dd HH:mm");
     sh.getRange(1, 1).setValue(`🏆 Leaderboard  ·  ${n} contest${n === 1 ? "" : "s"}  ·  updated ${updated}`).setFontSize(14).setFontWeight("bold");
@@ -328,12 +335,13 @@ function buildLeaderboard() {
             const trend = n
                 ? `=SPARKLINE(${a1_(row3, firstC)}:${a1_(row3, firstC + n - 1)},{"charttype","column";"empty","zero";"color","#2563eb"})`
                 : "";
-            return [ranks[i], delta, profile_(r.handle), r.name, r.total, r.attended, r.penalty, trend].concat(r.per);
+            return [ranks[i], delta, profile_(r.handle), r.name, r.total, r.attended, r.late, r.penalty, trend].concat(r.per);
         });
         sh.getRange(3, 1, values.length, width).setValues(values);
-        sh.getRange(2, 7).setNote("Total ICPC penalty in minutes over the contests played. Lower is better; it only separates people with the same contests and solves.");
+        sh.getRange(2, 7).setNote("Problems solved after the contest ended (included in Total solved). With the same contests and solves, fewer late solves rank higher.");
+        sh.getRange(2, 8).setNote("Total ICPC penalty in minutes over the contests played. Lower is better. Late solves add 0.");
         sh.getRange(3, 1, values.length, 2).setHorizontalAlignment("center");
-        sh.getRange(3, 5, values.length, 3).setHorizontalAlignment("center");
+        sh.getRange(3, 5, values.length, 4).setHorizontalAlignment("center");
         sh.getRange(3, 5, values.length, 1).setFontWeight("bold");
 
         const deltaRange = sh.getRange(3, 2, values.length, 1);
@@ -356,7 +364,7 @@ function buildLeaderboard() {
     sh.setFrozenColumns(3);
     sh.setRowHeight(2, 48);
     sh.setColumnWidth(1, 50).setColumnWidth(2, 50).setColumnWidth(3, 160).setColumnWidth(4, 180)
-        .setColumnWidth(5, 90).setColumnWidth(6, 75).setColumnWidth(7, 80).setColumnWidth(8, 140);
+        .setColumnWidth(5, 90).setColumnWidth(6, 75).setColumnWidth(7, 55).setColumnWidth(8, 80).setColumnWidth(9, 140);
     if (n) sh.setColumnWidths(FIXED.length + 1, n, 110);
 
     buildProgress_(contests, rows.length);
@@ -520,14 +528,17 @@ function groupFrom_(v) {
     return m ? m[1] : /^[\w-]+$/.test(s) ? s : "";
 }
 
-// Overall order: 1) took part in more contests, 2) more problems solved, 3) lower total ICPC penalty.
+// Overall order: 1) took part in more contests, 2) more problems solved, 3) fewer problems solved
+// after the contest ended, 4) lower total ICPC penalty.
 // Taking part comes first so that someone who played every contest always beats someone who skipped one.
+// Late solves count as solved with 0 penalty, so they are compared before penalty: otherwise a late
+// solver's 0 would beat an on-time solver's real penalty.
 function byStanding_(a, b) {
-    return b.attended - a.attended || b.total - a.total || a.penalty - b.penalty || a.handle.localeCompare(b.handle);
+    return b.attended - a.attended || b.total - a.total || a.late - b.late || a.penalty - b.penalty || a.handle.localeCompare(b.handle);
 }
 
 function standingKey_(r) {
-    return `${r.attended}|${r.total}|${r.penalty}`;
+    return `${r.attended}|${r.total}|${r.late}|${r.penalty}`;
 }
 
 // the same person as they stood before the latest contest
