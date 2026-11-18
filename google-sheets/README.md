@@ -10,7 +10,7 @@ their progress and how they rank against each other.
 | **C-&lt;contestId&gt;** | One tab per contest: who solved which problem (✔), rank inside the contest. Problem headers link to Codeforces. |
 | **Contests** | The contests to track (you fill this). |
 | **Contestants** | Handles + display names (you fill this). |
-| **Settings** | API URL, group ID, options. |
+| **Settings** | Group ID and options. |
 
 ## Setup (once, ~5 minutes)
 
@@ -19,7 +19,7 @@ their progress and how they rank against each other.
 3. Reload the sheet. A **Codeforces** menu appears → **Set up sheets**.
    Google asks for permission the first time (the script needs to edit the sheet and call the API).
 4. **Settings**: put the **Group ID** (`https://codeforces.com/group/<GROUP_ID>/...`; pasting the whole link works).
-   The API URL defaults to `https://hti-codeforces-api.netlify.app`.
+   The API address (`https://hti-codeforces-api.netlify.app`) is the `API_BASE` line at the top of `Code.gs`; change it there if your site ever moves.
 5. **Contestants**: one handle per row (profile links work too) and an optional display name.
 6. **Contests**: one contest ID (or full contest link) per row, **in the order they were held**, and tick **Auto refresh**.
 7. **Codeforces → Refresh all contests**.
@@ -49,6 +49,8 @@ the handle picker. Pick how to share:
   Only people with the same three numbers share a rank.
 - **Inside one contest:** most problems solved first, then the lowest penalty.
 - A person who registered but never submitted anything does not count as having played.
+- Problems solved **after the contest ended** (practice or virtual runs, or accepted after the end time) count as solved with **0 penalty**.
+  Because 0 is the lowest penalty, a person who solved everything late ranks above on-time solvers with the same number of solves.
 - Penalty is in minutes: the time of each accepted run plus 20 for every rejected run before it (compilation errors are free).
   It is Codeforces' own value for ICPC-style contests. For other contest types Codeforces reports 0, so ties stay ties.
   This needs the updated API (`functions/ac.js`) deployed on Netlify.

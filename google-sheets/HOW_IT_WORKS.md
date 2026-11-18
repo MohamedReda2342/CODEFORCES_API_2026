@@ -56,6 +56,8 @@ Two options in **Settings**:
 
 Someone who registered but never submitted anything did not play that contest.
 
+**Problems solved after the contest ended** count as solved, with 0 penalty. Since 0 is the lowest penalty, a person who solved everything late ranks above on-time solvers with the same number of solves.
+
 ## How to use it
 
 **Once, at the start**

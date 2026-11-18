@@ -6,7 +6,7 @@
 // Setup: Extensions -> Apps Script, paste this file, save, reload the sheet,
 //        then menu "Codeforces" -> "Set up sheets". See google-sheets/README.md.
 
-const DEFAULT_API = "https://hti-codeforces-api.netlify.app";
+const API_BASE = "https://hti-codeforces-api.netlify.app"; // your Netlify site; change it here if the site ever moves
 const SHEETS = {
     LEADERBOARD: "Leaderboard",
     PROGRESS: "My Progress",
@@ -45,16 +45,17 @@ function setup() {
     const ss = SpreadsheetApp.getActive();
 
     const settings = sheet_(SHEETS.SETTINGS);
+    // older versions had an "API base URL" row; the address now lives in the code
+    if (String(settings.getRange("A2").getValue()).trim() === "API base URL") settings.deleteRow(2);
     if (settings.getLastRow() < 2) {
-        settings.getRange(1, 1, 6, 3).setValues([
+        settings.getRange(1, 1, 5, 3).setValues([
             ["Setting", "Value", "Notes"],
-            ["API base URL", DEFAULT_API, "Your Netlify site"],
             ["Group ID", "", "From https://codeforces.com/group/<GROUP_ID>/... (a full group link also works)"],
             ["As manager", false, "Tick if the API key account is a manager of the group"],
             ["Only listed contestants", true, "Tick: rank only handles in the Contestants tab. Untick: everyone in the standings"],
             ["Last refresh", "", "Filled automatically"],
         ]);
-        settings.getRange("B4:B5").insertCheckboxes();
+        settings.getRange("B3:B4").insertCheckboxes();
         styleHeader_(settings.getRange(1, 1, 1, 3));
         settings.setColumnWidths(1, 1, 180).setColumnWidths(2, 1, 320).setColumnWidths(3, 1, 520);
         settings.setFrozenRows(1);
@@ -114,7 +115,7 @@ function refreshAll() {
             if (calls++) Utilities.sleep(API_GAP_MS);
             refreshContest_(c, cfg, roster);
         }
-        sheet_(SHEETS.SETTINGS).getRange("B6").setValue(new Date());
+        setSetting_("Last refresh", new Date());
         buildLeaderboard();
     });
 }
@@ -442,14 +443,28 @@ function removeTriggers() {
 
 // ---------- readers ----------
 
+// Settings are found by the label in column A, so reordering or deleting rows can't break them.
 function readSettings_() {
-    const v = sheet_(SHEETS.SETTINGS).getRange("B2:B5").getValues().map((r) => r[0]);
-    return {
-        apiBase: String(v[0] || DEFAULT_API).trim().replace(/\/+$/, ""),
-        groupId: groupFrom_(v[1]),
-        asManager: v[2] === true,
-        onlyListed: v[3] === true,
+    const sh = sheet_(SHEETS.SETTINGS);
+    const rows = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues() : [];
+    const get = (label) => {
+        const row = rows.find((r) => String(r[0]).trim() === label);
+        return row ? row[1] : "";
     };
+    return {
+        apiBase: API_BASE.replace(/\/+$/, ""),
+        groupId: groupFrom_(get("Group ID")),
+        asManager: get("As manager") === true,
+        onlyListed: get("Only listed contestants") === true,
+    };
+}
+
+function setSetting_(label, value) {
+    const sh = sheet_(SHEETS.SETTINGS);
+    if (sh.getLastRow() < 2) return;
+    const labels = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
+    const i = labels.findIndex((r) => String(r[0]).trim() === label);
+    if (i >= 0) sh.getRange(i + 2, 2).setValue(value);
 }
 
 // Map(lowercase handle -> { handle, name })

@@ -77,7 +77,7 @@ async function getAcFromStatus(groupId, contestId, pageNum, handles, asManager, 
     const tries = {}; // handle -> problem index -> { rejected, solvedAt }
     const chronological = [...subs].sort((a, b) => a.creationTimeSeconds - b.creationTimeSeconds);
     for (const s of chronological) {
-        if (s.author.participantType === "PRACTICE") continue; // after the contest, no penalty
+        if (s.author.participantType === "PRACTICE" || s.author.participantType === "VIRTUAL") continue; // after the contest: counts as solved, 0 penalty
         for (const m of s.author.members) {
             if (wanted && !wanted.has(m.handle.toLowerCase())) continue;
             const t = ((tries[m.handle] = tries[m.handle] || {})[s.problem.index] =
@@ -153,19 +153,40 @@ const getAc = async (groupId, contestId, page, handles, asManager) => {
             link: `${link}/problem/${p.index}`,
         }));
 
-        const contestants = {};
+        // Penalty is rebuilt per problem instead of using row.penalty: for problems solved after the
+        // contest ended Codeforces reports a huge placeholder time (about 35 million minutes each).
+        // Those problems still count as solved, with 0 penalty.
+        const limit = Number.isFinite(result.contest.durationSeconds) ? result.contest.durationSeconds : Infinity;
+        const byHandle = {}; // handle -> { problems: { index -> penalty in minutes }, tried }
         for (const row of result.rows) {
-            // team rows have several members; everyone gets the same solves
-            const solved = [];
+            // practice and virtual runs happen after the contest, so they never carry a penalty
+            const late = row.party.participantType === "PRACTICE" || row.party.participantType === "VIRTUAL";
+            const mine = {};
             let tried = false; // false for registered people who never submitted
             row.problemResults.forEach((pr, i) => {
-                if (pr.points > 0) solved.push(result.problems[i].index);
+                if (pr.points > 0) {
+                    const t = pr.bestSubmissionTimeSeconds;
+                    const onTime = !late && Number.isFinite(t) && t <= limit;
+                    mine[result.problems[i].index] = onTime ? Math.floor(t / 60) + 20 * (pr.rejectedAttemptCount || 0) : 0;
+                }
                 if (pr.points > 0 || pr.rejectedAttemptCount > 0) tried = true;
             });
+            // team rows have several members; everyone gets the same solves
             for (const m of row.party.members) {
-                // row.penalty is Codeforces' own ICPC penalty (minutes); 0 for non-ICPC contests
-                contestants[m.handle] = { ac: solved.join("-"), penalty: row.penalty || 0, tried };
+                const h = (byHandle[m.handle] = byHandle[m.handle] || { problems: {}, tried: false });
+                h.tried = h.tried || tried;
+                for (const [index, penalty] of Object.entries(mine)) {
+                    // one handle can have an in-contest row and a later practice row: keep the in-contest penalty
+                    if (!(index in h.problems) || (h.problems[index] === 0 && penalty > 0)) h.problems[index] = penalty;
+                }
             }
+        }
+
+        const contestants = {};
+        for (const [handle, h] of Object.entries(byHandle)) {
+            const solvedIndexes = result.problems.map((p) => p.index).filter((i) => i in h.problems);
+            const penalty = solvedIndexes.reduce((sum, i) => sum + h.problems[i], 0);
+            contestants[handle] = { ac: solvedIndexes.join("-"), penalty, tried: h.tried };
         }
 
         return {
