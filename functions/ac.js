@@ -72,11 +72,29 @@ async function getAcFromStatus(groupId, contestId, pageNum, handles, asManager, 
         }
     }
 
+    // ICPC penalty rebuilt from submissions: per solved problem, the minute of the first
+    // accepted run + 20 for every earlier rejected run (compilation errors are free).
+    const tries = {}; // handle -> problem index -> { rejected, solvedAt }
+    const chronological = [...subs].sort((a, b) => a.creationTimeSeconds - b.creationTimeSeconds);
+    for (const s of chronological) {
+        if (s.author.participantType === "PRACTICE") continue; // after the contest, no penalty
+        for (const m of s.author.members) {
+            if (wanted && !wanted.has(m.handle.toLowerCase())) continue;
+            const t = ((tries[m.handle] = tries[m.handle] || {})[s.problem.index] =
+                tries[m.handle][s.problem.index] || { rejected: 0, solvedAt: null });
+            if (t.solvedAt !== null) continue;
+            if (s.verdict === "OK") t.solvedAt = Math.floor(s.relativeTimeSeconds / 60);
+            else if (s.verdict !== "COMPILATION_ERROR") t.rejected++;
+        }
+    }
+    const penaltyOf = (handle) =>
+        Object.values(tries[handle] || {}).reduce((sum, t) => sum + (t.solvedAt === null ? 0 : t.solvedAt + 20 * t.rejected), 0);
+
     const indexes = Object.keys(problemsByIndex).sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
     const contestants = {};
     if (pageNum === 1) {
         for (const [handle, set] of Object.entries(solvedBy)) {
-            contestants[handle] = { ac: indexes.filter((i) => set.has(i)).join("-") };
+            contestants[handle] = { ac: indexes.filter((i) => set.has(i)).join("-"), penalty: penaltyOf(handle), tried: true };
         }
     }
 
@@ -139,11 +157,14 @@ const getAc = async (groupId, contestId, page, handles, asManager) => {
         for (const row of result.rows) {
             // team rows have several members; everyone gets the same solves
             const solved = [];
+            let tried = false; // false for registered people who never submitted
             row.problemResults.forEach((pr, i) => {
                 if (pr.points > 0) solved.push(result.problems[i].index);
+                if (pr.points > 0 || pr.rejectedAttemptCount > 0) tried = true;
             });
             for (const m of row.party.members) {
-                contestants[m.handle] = { ac: solved.join("-") };
+                // row.penalty is Codeforces' own ICPC penalty (minutes); 0 for non-ICPC contests
+                contestants[m.handle] = { ac: solved.join("-"), penalty: row.penalty || 0, tried };
             }
         }
 
